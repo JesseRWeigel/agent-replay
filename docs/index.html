@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-replay: post an agent run without posting your keys</title>
+<meta name="description" content="Turn an agent transcript into one self-contained HTML file with
+a scrubber, collapsible tool calls, inline diffs, a cost gutter, and secrets removed. It refuses
+to write the file if anything credential-shaped survives.">
+<style>
+:root{
+  --bg:#f7f7f5; --panel:#fff; --ink:#14171a; --ink2:#4c565f; --ink3:#7a8590;
+  --line:#dfe1e4; --accent:#0f5d54; --accent-soft:#e2f0ed;
+  --danger:#8f2f1f; --danger-soft:#fbeae6; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0e1113; --panel:#171b1e; --ink:#e8ebed; --ink2:#a4aeb6; --ink3:#737d86;
+  --line:#272d32; --accent:#5fd0bf; --accent-soft:#12312d;
+  --danger:#ef9584; --danger-soft:#321914;}}
+:root[data-theme=dark]{
+  --bg:#0e1113; --panel:#171b1e; --ink:#e8ebed; --ink2:#a4aeb6; --ink3:#737d86;
+  --line:#272d32; --accent:#5fd0bf; --accent-soft:#12312d;
+  --danger:#ef9584; --danger-soft:#321914;}
+:root[data-theme=light]{
+  --bg:#f7f7f5; --panel:#fff; --ink:#14171a; --ink2:#4c565f; --ink3:#7a8590;
+  --line:#dfe1e4; --accent:#0f5d54; --accent-soft:#e2f0ed;
+  --danger:#8f2f1f; --danger-soft:#fbeae6;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:850px;margin:0 auto;padding:0 1.25rem}
+header{padding:4rem 0 2.5rem;border-bottom:1px solid var(--line)}
+.eyebrow{font:700 .7rem/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 1rem}
+h1{font-size:clamp(1.9rem,5vw,2.9rem);line-height:1.06;letter-spacing:-.025em;margin:0 0 1rem;
+  font-weight:760;text-wrap:balance}
+.lede{font-size:1.08rem;color:var(--ink2);max-width:62ch;margin:0 0 1.75rem}
+.cta{display:flex;gap:.6rem;flex-wrap:wrap}
+.btn{display:inline-block;font-size:.88rem;font-weight:620;padding:.55rem 1rem;border-radius:5px;
+  text-decoration:none;border:1px solid var(--line);color:var(--ink);background:var(--panel)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary:hover{color:var(--bg);opacity:.9}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+section{padding:3rem 0;border-bottom:1px solid var(--line)}
+h2{font-size:1.4rem;margin:0 0 .7rem;letter-spacing:-.015em;text-wrap:balance}
+h3{font-size:1rem;margin:1.75rem 0 .4rem}
+p,li{color:var(--ink2);max-width:68ch}
+strong{color:var(--ink)}
+ul{padding-left:1.15rem}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:.85rem 1rem;
+  overflow-x:auto;font:.82rem/1.55 var(--mono);margin:1rem 0}
+code{font-family:var(--mono);font-size:.88em}
+p code,li code,td code{background:var(--panel);border:1px solid var(--line);border-radius:3px;
+  padding:.05em .3em}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.86rem;margin:1rem 0}
+th,td{text-align:left;padding:.5rem .65rem;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{font:700 .72rem/1 var(--mono);text-transform:uppercase;letter-spacing:.07em;
+  color:var(--ink3);border-bottom:2px solid var(--ink)}
+.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono)}
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:.8rem 1rem;
+  border-radius:0 4px 4px 0;margin:1.5rem 0;max-width:70ch;color:var(--ink2)}
+.warn{border-left-color:var(--danger);background:var(--danger-soft)}
+.chip{display:inline-block;font:700 .68rem/1 var(--mono);padding:.25rem .45rem;border-radius:3px;
+  background:var(--accent-soft);color:var(--accent);margin-right:.3rem}
+.chip.no{background:var(--danger-soft);color:var(--danger)}
+footer{padding:2.5rem 0 4rem;color:var(--ink3);font-size:.84rem}
+a{color:var(--accent)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Catalog task AGENT-048</p>
+  <h1>Post an agent run<br>without posting your keys</h1>
+  <p class="lede">agent-replay turns a transcript into a single HTML file you can attach to a bug
+  report or drop in a thread. It has a scrubber, collapsible tool calls, inline diffs and a cost
+  gutter. The part that took the work is the redaction, and the part that makes the redaction
+  trustworthy is that the tool refuses to write the file at all when something
+  credential-shaped survives.</p>
+  <div class="cta">
+    <a class="btn primary" href="./demo.html">Open a demo replay</a>
+    <a class="btn" href="https://github.com/JesseRWeigel/agent-replay">Source on GitHub</a>
+  </div>
+</header>
+
+<section>
+  <h2>The refusal is the feature</h2>
+  <p>Most redaction is a filter: it removes what it recognises and hands you the result. If it
+  missed something, you find out when someone replies to your thread. This writes nothing until
+  the rendered file has been scanned and come back clean, and a survivor is an error with a
+  nonzero exit code rather than a warning you scroll past.</p>
+  <div class="note"><strong>The scan is deliberately not the filter.</strong> It is written from
+  scratch, with none of the same patterns, and it runs on the finished HTML rather than on the
+  transcript. A checker that shares code with the redactor cannot catch the redactor's mistakes,
+  because a bug in a pattern is invisible to a check built on that same pattern.</div>
+  <p>That separation earns its keep. Three times while building this, the checker and the
+  redactor disagreed, and the checker was right every time. The clearest case: a truncated
+  private key, a <code>BEGIN OPENSSH PRIVATE KEY</code> header with body but no
+  <code>END</code> marker. The redactor required a complete block and skipped it. A transcript
+  that captured the first sixty lines of an <code>id_rsa</code> has published enough to matter,
+  so the redactor was raised to meet the checker rather than the check being relaxed.</p>
+</section>
+
+<section>
+  <h2>Three layers, because each one misses what the others catch</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Layer</th><th>Catches</th><th>Would miss on its own</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Known formats</strong></td>
+        <td>Provider tokens by shape: Anthropic, OpenAI, OpenRouter, GitHub, GitLab, Google,
+        AWS, Slack, Stripe, npm, PyPI, Hugging Face, JWTs, PEM blocks whole or truncated,
+        bearer headers, inline database passwords.</td>
+        <td><code>ADMIN_PASSWORD=hunter2</code>, which matches no format at all.</td></tr>
+      <tr><td><strong>Assignment context</strong></td>
+        <td>A value is a secret because of what it is called. Covers dotenv, JSON, YAML, CLI
+        flags and request headers.</td>
+        <td>A bare token pasted into prose with no variable name near it.</td></tr>
+      <tr><td><strong>Entropy near a secret word</strong></td>
+        <td>A long random-looking string within 90 characters of a word like
+        <code>api_key</code>, even when it matches no known prefix.</td>
+        <td>Nothing it is asked to catch, but it is the last-resort net rather than the
+        first line.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note warn"><strong>Layering hides its own failures, which is a verification
+  problem.</strong> Attacking the verify script found that emptying the known-format list
+  entirely still passed every check, because the other two layers covered for it. That
+  redundancy is what you want at runtime and useless for testing, since a dead layer is
+  invisible. Each layer now has a liveness probe built from a secret only that layer can catch,
+  so a mechanism that stops working fails the build and is named.</div>
+</section>
+
+<section>
+  <h2>Over-redacting is also a failure</h2>
+  <p>A tool that blanks everything passes any leak test perfectly and gets uninstalled the same
+  afternoon, at which point it protects nobody. So roughly as many test cases assert that
+  ordinary content survives untouched.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th></th><th>Input</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><span class="chip">keep</span></td><td><code>DEBUG_TOKEN_PARSER=true</code></td>
+        <td>Untouched. An earlier version redacted this whole line, because the entropy
+        candidate spanned the <code>=</code> and swallowed the variable name.</td></tr>
+      <tr><td><span class="chip">keep</span></td>
+        <td><code>await refreshAuthenticationTokenSilently()</code></td>
+        <td>Untouched. Entropy candidates now require a digit, since camelCase identifiers do
+        not have one and real credentials essentially always do.</td></tr>
+      <tr><td><span class="chip">keep</span></td>
+        <td><code>git grep "BEGIN OPENSSH PRIVATE KEY"</code></td>
+        <td>Untouched. A PEM header alone is not key material, so the check requires base64
+        body following it. Without this, any transcript discussing secret detection refuses to
+        export, which teaches people to pass <code>--allow-leaks</code>.</td></tr>
+      <tr><td><span class="chip">keep</span></td><td>A 40-character git SHA</td>
+        <td>Untouched, along with content hashes and package versions.</td></tr>
+      <tr><td><span class="chip no">remove</span></td>
+        <td><code>/mnt/c/Users/name/</code></td>
+        <td>Anonymised. Home paths carry a username, and WSL, macOS and native Windows shapes
+        are all handled, not only the local one.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>The cost gutter, and the easiest way to get it wrong</h2>
+  <p>An agent run is almost entirely cache reads, which are billed at a fraction of the input
+  rate. Adding input and output tokens and multiplying by the input price overstates a long
+  session several times over.</p>
+  <pre>cache-aware  $0.3180
+naive        $3.0180     9.5x too high on a single synthetic turn</pre>
+  <p>On a real session of 856 million tokens the same mistake reports roughly
+  <strong>$12,700 instead of $1,690</strong>. The gutter also separates confidence: a model with
+  a published rate is priced exactly, a model whose family is known but whose specific price is
+  not gets a family rate and is <strong>labelled an estimate</strong>, and an unrecognised model
+  falls back to the most expensive tier so the number errs high rather than flattering.</p>
+  <div class="note">Inventing a specific price for a model whose pricing has not been verified
+  would be worse than saying the figure is an estimate, so the page says which calls were
+  estimated and on what basis.</div>
+</section>
+
+<section>
+  <h2>Using it</h2>
+<pre>pip install -e .
+agent-replay --list                          # recent transcripts
+agent-replay                                 # export the most recent one
+agent-replay run.jsonl -o replay.html
+agent-replay run.jsonl --audit-only          # report what would be removed, write nothing
+agent-replay run.jsonl --include-thinking    # reasoning blocks, excluded by default</pre>
+  <p>Exit <code>0</code> on success, <code>1</code> when something survived redaction and the
+  file was therefore not written, <code>2</code> on bad usage or an unreadable transcript.</p>
+  <p><strong>Thinking blocks are excluded unless you ask for them.</strong> They are the model's
+  working notes rather than its answer, and someone sharing a run to report a bug has not
+  necessarily chosen to publish them.</p>
+  <p><strong>An empty result is an error, not an empty file.</strong> A transcript that produces
+  no events exits 2, because a zero-event replay looks like a clean run.</p>
+</section>
+
+<section>
+  <h2>Verified</h2>
+  <p>The check that carries the most weight plants credentials of every recognised shape into a
+  synthetic transcript, exports it, then greps the produced HTML for the literal planted values
+  using <code>grep -F</code> and none of this project's own matching code.</p>
+  <pre>1. unit suite
+  ok    Ran 17 tests passed
+
+2. a synthetic transcript exports end to end
+  ok    exported a 17086 byte replay
+
+3. every planted secret is absent from the exported file
+  ok    all 15 planted secrets are absent, checked with grep -F against the literal values
+
+3b. each redaction mechanism is individually alive
+  known-format         alive   -&gt; please use [redacted:github-token] when you push
+  assignment-context   alive   -&gt; ADMIN_PASSWORD=[redacted:assigned-secret]
+  entropy              alive   -&gt; the api_key we were issued reads [redacted:high-entropy] exactly
+  ok    all three redaction mechanisms independently catch something
+
+4. a transcript with no secrets is NOT mangled
+  1 redaction marker(s) in a transcript with no secrets in it
+  ok    clean content survives intact, so the tool is not simply blanking everything
+
+5. the exporter REFUSES when something survives
+  exit=1 file_written=False
+  ok    a surviving credential blocks the write and exits nonzero
+
+6. the export is genuinely self-contained
+  no remote assets, doctype and viewport present, both themes
+  ok    self-contained, standards mode, both themes, no personal paths
+
+7. the cost model does not price cached tokens as fresh ones
+  cache-aware $0.3180  naive $3.0180  ratio 9.5x
+  ok    cache reads are discounted, and an unlisted model is flagged as an estimate
+
+8. a real transcript, if one is present
+  ok    exported a real transcript (5553042 bytes)
+
+9. no secrets in this repository&#x27;s own tracked files
+  ok    no real home path and no credential-shaped strings (AWS&#x27;s documented example key allowed)
+
+10 passed, 0 failed
+VERIFY OK</pre>
+</section>
+
+<section>
+  <h2>What it does not do</h2>
+  <ul>
+    <li><strong>Only Claude Code transcripts.</strong> The JSONL shape is specific. Other agent
+    formats would need their own parser.</li>
+    <li><strong>A purely alphabetic secret can slip past the entropy layer</strong>, which
+    requires a digit so that camelCase identifiers are not redacted. The known-format and
+    assignment layers still cover the realistic cases, which is what the layering is for.</li>
+    <li><strong>Encryption, reversal and chunking are not attempted.</strong> A secret split
+    across two strings and reassembled at runtime will not be found. One layer of base64 is
+    decoded and checked; more than one is not.</li>
+    <li><strong>Read the file before you post it.</strong> This makes a leak much less likely
+    and cannot make it impossible, and no tool that pattern-matches text can.</li>
+  </ul>
+</section>
+
+<footer>
+  <p>Part of <a href="https://github.com/JesseRWeigel/722-things-to-build">722 things to
+  build</a>. MIT licensed.</p>
+</footer>
+
+</div>
+</body>
+</html>
