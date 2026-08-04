@@ -235,6 +235,30 @@ class TestHomePathBoundaries(unittest.TestCase):
         src = "./src/home/user/x.ts"
         self.assertEqual(self._clean(src), src)
 
+    def test_a_file_url_is_a_boundary(self):
+        # `file:///home/name/...` is how a browser tool reports a local path, and the character
+        # before /home is a slash. Found 19,875 lines into a real transcript.
+        got = self._clean("navigate to file:///home/carol/Projects/x/page.html")
+        self.assertNotIn("carol", got)
+
+    def test_a_url_path_that_merely_says_home_survives(self):
+        # The control for adding a slash to the boundary set.
+        url = "see https://example.com/home/about for more"
+        self.assertEqual(self._clean(url), url)
+
+    def test_the_leak_check_agrees_with_the_redactor(self):
+        # These two disagreed, and the disagreement was not a safety margin. The checker flagged
+        # a source path and a URL, so any transcript containing either could never be exported.
+        # The check is that the redactor did its job, not that no string resembles a path.
+        for benign in ('the fixture is "./src/home/user/x.ts" here',
+                       "see https://example.com/home/about for more"):
+            self.assertEqual(find_leaks(self._clean(benign)), [], benign)
+
+    def test_but_the_leak_check_still_catches_a_real_survivor(self):
+        # The control for the control. If find_leaks matched nothing, the test above would pass
+        # on a checker that had been switched off.
+        self.assertTrue(find_leaks("a raw path /home/carol/secrets sits here"))
+
     def test_and_a_plain_home_path_is_still_redacted(self):
         # The control for the control: if nothing were redacted, all of the above would pass.
         got = self._clean("the file is /home/carol/notes.md")

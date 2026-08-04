@@ -277,7 +277,11 @@ def redact(text: str, *, home: str | None = None, extra_patterns=None) -> Result
         #
         # Adding a dot does not reopen the false positive this rule was shaped around:
         # `./src/home/user/x.ts` has a `c` before /home and is still skipped.
-        re.compile(r"(?:(?<=^)|(?<=[\s\"\'`=:,(\[.])|(?<=\\n)|(?<=\\r)|(?<=\\t))"
+        # A slash too, because `file:///home/name/...` is how a browser tool reports a local
+        # path and it appeared 19,875 lines into a real transcript. The dot and slash do not
+        # reopen the false positive this rule was shaped around: `./src/home/user/x.ts` has a
+        # `c` before /home, and `https://example.com/home/about` has an `m`.
+        re.compile(r"(?:(?<=^)|(?<=[\s\"\'`=:,(\[./])|(?<=\\n)|(?<=\\r)|(?<=\\t))"
                    r"(/home|/Users)/"
                    r"([A-Za-z0-9][A-Za-z0-9._\-]{1,31})", re.M),
         re.compile(r"(/mnt/[a-z]/Users)/([A-Za-z0-9][A-Za-z0-9._\-]{1,31})", re.I),
@@ -323,7 +327,14 @@ LEAK_CHECK = [
         r"(?=[A-Za-z0-9+/]{40,})(?=[A-Za-z0-9+/]*[G-Zg-z+/])[A-Za-z0-9+/]{40,}")),
     ("slack token", re.compile(r"\bxox[a-z]-[A-Za-z0-9\-]{8,}")),
     ("inline db password", re.compile(r"(?i)\b\w+://[^\s:@]+:[^\s@]{3,}@")),
-    ("home path", re.compile(r"/(?:home|Users)/[A-Za-z0-9._\-]+/")),
+    # The SAME boundary rule the redactor uses. These two disagreed, and the disagreement was
+    # not a safety margin: the checker flagged `./src/home/user/x.ts` and
+    # `https://example.com/home/about`, which are a source path and a URL, so a transcript
+    # containing either could never be exported at all. The check is that the redactor did its
+    # job, not that no string anywhere resembles a path.
+    ("home path", re.compile(
+        r"(?:(?<=^)|(?<=[\s\"\'`=:,(\[./])|(?<=\\n)|(?<=\\r)|(?<=\\t))"
+        r"(?:/home|/Users)/(?!~)[A-Za-z0-9][A-Za-z0-9._\-]{1,31}", re.M)),
 ]
 
 
