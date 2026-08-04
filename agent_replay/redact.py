@@ -264,7 +264,21 @@ def redact(text: str, *, home: str | None = None, extra_patterns=None) -> Result
     #     is the drive letter, a word character.
     #   C:\Users\name, the native Windows form
     HOME_SHAPES = [
-        re.compile(r"(?:(?<=^)|(?<=[\s\"\'`=:,(\[]))(/home|/Users)/"
+        # Two boundaries were missing, and a real transcript found both. The tool refused to
+        # write rather than leaking, which is the right failure, but it meant it could not export
+        # the thing it exists to export.
+        #
+        #   A JSON-ESCAPED NEWLINE. Inside a .jsonl transcript a newline is the two characters
+        #   backslash and n, so the character before /home is the letter n and no boundary
+        #   matched. Every path in captured tool output arrives this way.
+        #
+        #   A RELATIVE TRAVERSAL. `../../home/<name>/...` reaches the same directory and carries
+        #   the same username, and the character before /home is a dot.
+        #
+        # Adding a dot does not reopen the false positive this rule was shaped around:
+        # `./src/home/user/x.ts` has a `c` before /home and is still skipped.
+        re.compile(r"(?:(?<=^)|(?<=[\s\"\'`=:,(\[.])|(?<=\\n)|(?<=\\r)|(?<=\\t))"
+                   r"(/home|/Users)/"
                    r"([A-Za-z0-9][A-Za-z0-9._\-]{1,31})", re.M),
         re.compile(r"(/mnt/[a-z]/Users)/([A-Za-z0-9][A-Za-z0-9._\-]{1,31})", re.I),
         re.compile(r"([A-Za-z]:[\\/]{1,2}Users)[\\/]{1,2}([A-Za-z0-9][A-Za-z0-9._\-]{1,31})"),

@@ -207,5 +207,39 @@ class TestMechanics(unittest.TestCase):
         self.assertEqual(once, twice, "re-redacting changed the output")
 
 
+class TestHomePathBoundaries(unittest.TestCase):
+    """Two boundaries a real transcript found, both of which blocked export entirely.
+
+    The tool refused to write rather than leaking, which is the right failure and also meant it
+    could not do the one thing it exists for. Both shapes appear in every .jsonl transcript.
+    """
+
+    def _clean(self, s):
+        out = redact(s)
+        return out.text if hasattr(out, "text") else str(out)
+
+    def test_a_json_escaped_newline_is_a_boundary(self):
+        # In a .jsonl file a newline is the two characters backslash and n, so the character
+        # before /home is the letter n. Every path in captured tool output arrives this way.
+        got = self._clean(r'{"out":"x\n/home/carol/.config/gh/config.yml"}')
+        self.assertNotIn("/home/carol", got)
+        self.assertIn("/home/~", got)
+
+    def test_a_relative_traversal_is_a_boundary(self):
+        got = self._clean("see ../../home/carol/.claude/projects/x")
+        self.assertNotIn("/home/carol", got)
+
+    def test_a_source_path_containing_home_is_still_left_alone(self):
+        # The control. This rule was shaped around not mangling ordinary relative paths, and
+        # adding a dot to the boundary set must not reopen that.
+        src = "./src/home/user/x.ts"
+        self.assertEqual(self._clean(src), src)
+
+    def test_and_a_plain_home_path_is_still_redacted(self):
+        # The control for the control: if nothing were redacted, all of the above would pass.
+        got = self._clean("the file is /home/carol/notes.md")
+        self.assertNotIn("carol", got)
+
+
 if __name__ == "__main__":
     unittest.main()

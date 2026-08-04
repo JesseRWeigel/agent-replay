@@ -7,7 +7,7 @@ removed.
 **[Read this on the web](https://jesserweigel.github.io/agent-replay/)** ·
 **[Open a demo replay](https://jesserweigel.github.io/agent-replay/demo.html)**
 
-Catalog task `AGENT-048`. Part of [thousand](https://github.com/JesseRWeigel/722-things-to-build).
+Catalog task `AGENT-048`. Part of [722 things to build](https://github.com/JesseRWeigel/722-things-to-build).
 
 ```
 $ agent-replay --list
