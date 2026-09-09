@@ -269,6 +269,8 @@ def build(events, meta: dict, *, max_output: int = 6000) -> str:
 
     payload = []
     for e, (usd, tok) in zip(events, gutter):
+        if e.hidden:
+            continue
         text = e.text or ""
         trunc = 0
         if len(text) > max_output:
@@ -293,6 +295,12 @@ def build(events, meta: dict, *, max_output: int = 6000) -> str:
             "clock": (e.ts or "")[11:19],
         })
 
+    # A trailing usage-only snapshot has no safe content to render, but the scrubber's final
+    # visible row must still agree with the header and aggregate totals.
+    if payload and gutter:
+        payload[-1]["usd"] = round(gutter[-1][0], 6)
+        payload[-1]["tok"] = gutter[-1][1]
+
     kinds = sorted({e["kind"] for e in payload})
     tools = sorted({e["tool"] for e in payload if e["tool"]})
     red = meta.get("redactions") or {}
@@ -311,14 +319,30 @@ def build(events, meta: dict, *, max_output: int = 6000) -> str:
                   'was scanned after rendering and nothing credential-shaped survived, which '
                   'is the same check that would have blocked the export.</p>')
 
-    price_note = ""
+    total_calls = total.priced_calls + total.estimated_calls + total.unpriced_calls
+    price_parts = [
+        '<b>This is an API-equivalent list-price estimate in USD, not an invoice.</b> '
+        f'Rates: {html.escape(RATE_SOURCE)}. Subscription plans, discounts, and other billing '
+        'adjustments are not represented.'
+    ]
+    if total.estimated_calls:
+        models = ", ".join(sorted(total.estimated_models))
+        price_parts.append(
+            f'{total.estimated_calls:,} of {total_calls:,} billed responses used family-rate '
+            f'estimates for {html.escape(models)}.'
+        )
     if total.unpriced_calls:
-        models = ", ".join(sorted(total.unknown_models)) or "an unrecognised model"
-        price_note = (f'<p class="banner"><b>The cost figure is an estimate.</b> '
-                      f'{total.unpriced_calls:,} of '
-                      f'{total.priced_calls + total.unpriced_calls:,} calls ran on {models}, '
-                      f'so a family rate was applied rather than a published per-model price. '
-                      f'Rates: {html.escape(RATE_SOURCE)}.</p>')
+        models = ", ".join(sorted(total.unpriced_models)) or "an unidentified model"
+        price_parts.append(
+            f'<b>The displayed dollar total is incomplete.</b> {total.unpriced_calls:,} of '
+            f'{total_calls:,} billed responses had no known rate and were omitted: '
+            f'{html.escape(models)}. Their tokens remain in the token total.'
+        )
+    price_note = f'<p class="banner">{" ".join(price_parts)}</p>'
+    cost_label = (
+        "priced API estimate (USD)" if total.unpriced_calls
+        else "API-equivalent estimate (USD)"
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -334,11 +358,11 @@ def build(events, meta: dict, *, max_output: int = 6000) -> str:
   <h1>{html.escape(meta.get('title', 'Agent run replay'))}</h1>
   <p class="sub">{html.escape(meta.get('subtitle', ''))}</p>
   <div class="stats">
-    <div class="stat"><b>{len(events):,}</b><span>events</span></div>
+    <div class="stat"><b>{len(payload):,}</b><span>events</span></div>
     <div class="stat"><b>{sum(1 for e in events if e.kind == 'tool_use'):,}</b><span>tool calls</span></div>
     <div class="stat"><b>{sum(1 for e in events if e.is_error):,}</b><span>errors</span></div>
     <div class="stat"><b>{total.total_tokens / 1e6:,.1f}M</b><span>tokens</span></div>
-    <div class="stat"><b>${total.dollars:,.2f}</b><span>estimated cost</span></div>
+    <div class="stat"><b>${total.dollars:,.2f}</b><span>{cost_label}</span></div>
     <div class="stat"><b>{red_total}</b><span>secrets removed</span></div>
   </div>
   {banner}

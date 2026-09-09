@@ -6,9 +6,9 @@ differently from fresh ones, and an agent run is mostly cache reads. Adding
 several times over, because it prices tens of millions of cache-read tokens at the full input
 rate. That is the single easiest way to publish a wrong number here.
 
-The rates are public list prices in dollars per million tokens, and they change. They live in
-one dict, the source and the date they were taken are recorded, and `unknown_models` is reported
-so a run priced with a fallback rate is never presented as though it were exact.
+The rates are public API list prices in US dollars per million tokens, and they change. Exact
+model IDs and supported version aliases are explicit. Family estimates are labelled, and usage
+for a model with no rate remains in token totals while its dollar cost is left unavailable.
 """
 from __future__ import annotations
 
@@ -25,19 +25,30 @@ RATES = {
     "claude-haiku-4-5":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25,   "cache_read": 0.10},
     "claude-3-5-haiku":  {"input": 0.80, "output": 4.0,  "cache_write": 1.0,    "cache_read": 0.08},
 }
-# Family-level rates, used when the exact model id is unknown but its family is not. A run on
-# claude-opus-5 is priced at opus rates and reported as INFERRED, never as exact. Inventing a
-# specific published price for a model whose pricing has not been verified would be worse than
-# saying the number is an estimate.
+# Versioned IDs that intentionally use the published rate of their canonical model. An ID absent
+# from this table is never classified as exact by substring resemblance.
+MODEL_ALIASES = {
+    "claude-opus-4-20250514": "claude-opus-4",
+    "claude-opus-4-1-20250805": "claude-opus-4-1",
+    "claude-sonnet-4-20250514": "claude-sonnet-4",
+    "claude-sonnet-4-5-20250929": "claude-sonnet-4-5",
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5",
+    "claude-3-5-haiku-20241022": "claude-3-5-haiku",
+}
+
+# Family-level rates are estimates for IDs that are recognisably in a known Claude family but
+# are not an exact ID or alias above.
 FAMILY = {
     "opus":   {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.50},
     "sonnet": {"input": 3.0,  "output": 15.0, "cache_write": 3.75,  "cache_read": 0.30},
     "haiku":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25,  "cache_read": 0.10},
 }
-# Used when neither the id nor the family is recognised. Deliberately the most expensive tier,
-# so an unknown model produces an over-estimate rather than a flattering under-estimate.
-FALLBACK = {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.50}
-RATE_SOURCE = "Anthropic public list pricing, recorded 2026-07-26"
+FAMILY_PREFIXES = {
+    "claude-opus-": "opus",
+    "claude-sonnet-": "sonnet",
+    "claude-haiku-": "haiku",
+}
+RATE_SOURCE = "Anthropic public API list pricing in USD, recorded 2026-07-26"
 
 # Local, cached or replayed turns carry this in place of a model id and always report zero
 # tokens. They are free, and counting them as unpriced would put a spurious accuracy warning on
@@ -55,9 +66,11 @@ class Cost:
     cache_write: int = 0
     cache_read: int = 0
     dollars: float = 0.0
-    unknown_models: set = field(default_factory=set)
     priced_calls: int = 0
+    estimated_calls: int = 0
     unpriced_calls: int = 0
+    estimated_models: set = field(default_factory=set)
+    unpriced_models: set = field(default_factory=set)
 
     @property
     def total_tokens(self) -> int:
@@ -65,34 +78,28 @@ class Cost:
 
 
 def rate_for(model: str):
-    """Return (rates, confidence). Confidence is exact, inferred, or unknown.
-
-    Longest match wins, so claude-sonnet-4-5-20250101 finds claude-sonnet-4-5 rather than
-    claude-sonnet-4.
-    """
+    """Return (rates, confidence). Confidence is exact, inferred, or unknown."""
     if not model:
         return None, "unknown"
     m = model.lower()
-    best = None
-    for key, r in RATES.items():
-        if key in m and (best is None or len(key) > len(best[0])):
-            best = (key, r)
-    if best:
-        return best[1], "exact"
-    for fam, r in FAMILY.items():
-        if fam in m:
-            return r, "inferred"
+    canonical = MODEL_ALIASES.get(m, m)
+    if canonical in RATES:
+        return RATES[canonical], "exact"
+    for prefix, family in FAMILY_PREFIXES.items():
+        if m.startswith(prefix):
+            return FAMILY[family], "inferred"
     return None, "unknown"
 
 
-def price(usage: dict, model: str) -> tuple[float, str]:
-    """Dollars for one assistant turn, and the confidence in the rate used."""
+def price(usage: dict, model: str) -> tuple[float | None, str]:
+    """API-equivalent USD for one response, or None when no rate is available."""
     if not usage:
         return 0.0, "exact"
     if model == SYNTHETIC:
         return 0.0, "exact"
     r, confidence = rate_for(model)
-    r = r or FALLBACK
+    if r is None:
+        return None, confidence
     inp = usage.get("input_tokens", 0) or 0
     out = usage.get("output_tokens", 0) or 0
     read = usage.get("cache_read_input_tokens", 0) or 0
@@ -113,32 +120,104 @@ def price(usage: dict, model: str) -> tuple[float, str]:
     return total, confidence
 
 
+TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+
+
+@dataclass
+class _BilledResponse:
+    usage: dict
+    model: str
+    dollars: float | None
+    confidence: str
+
+
+def _response_identity(event):
+    """Return a billed identity, with a conservative fallback when message.id is absent.
+
+    Provider message IDs identify one billed response across duplicate transcript rows. Without
+    that ID, a row UUID and model identify the response. If the UUID is also absent, the source
+    row is used. Distinct fallback rows are counted separately because there is no evidence that
+    they represent the same billable response.
+    """
+    if event.message_id:
+        return "message", event.message_id
+    if event.uuid:
+        return "row", event.uuid, event.model
+    if event.source_row >= 0:
+        return "source-row", event.source_row, event.model
+    return "event", event.index, event.model
+
+
+def _merged_usage(previous: dict, update: dict) -> dict:
+    """Merge cumulative streaming snapshots by keeping each largest observed counter."""
+    merged = dict(previous)
+    for name in TOKEN_FIELDS:
+        merged[name] = max(previous.get(name, 0) or 0, update.get(name, 0) or 0)
+
+    old_detail = previous.get("cache_creation") or {}
+    new_detail = update.get("cache_creation") or {}
+    if old_detail or new_detail:
+        merged["cache_creation"] = {
+            "ephemeral_5m_input_tokens": max(
+                old_detail.get("ephemeral_5m_input_tokens", 0) or 0,
+                new_detail.get("ephemeral_5m_input_tokens", 0) or 0,
+            ),
+            "ephemeral_1h_input_tokens": max(
+                old_detail.get("ephemeral_1h_input_tokens", 0) or 0,
+                new_detail.get("ephemeral_1h_input_tokens", 0) or 0,
+            ),
+        }
+    return merged
+
+
+def _token_total(usage: dict) -> int:
+    return sum(usage.get(name, 0) or 0 for name in TOKEN_FIELDS)
+
+
+def _update_response(responses: dict, event):
+    identity = _response_identity(event)
+    previous = responses.get(identity)
+    usage = _merged_usage(previous.usage if previous else {}, event.usage)
+    # Conflicting labels on duplicate rows are ambiguous. Keep the first non-empty label so
+    # pricing is deterministic while the provider message ID still prevents double counting.
+    model = previous.model if previous and previous.model else event.model
+    dollars, confidence = price(usage, model)
+    current = _BilledResponse(usage, model, dollars, confidence)
+    responses[identity] = current
+    return previous, current
+
+
 def accumulate(events) -> Cost:
     c = Cost()
-    seen = set()
+    responses = {}
     for e in events:
         if not e.usage:
             continue
-        # One usage record covers a whole assistant turn, and that turn can produce several
-        # events (text plus tool calls). Counting it once per event would multiply the bill by
-        # the number of blocks in the message.
-        key = (e.uuid, e.model)
-        if key in seen:
-            continue
-        seen.add(key)
-        u = e.usage
+        _update_response(responses, e)
+
+    for response in responses.values():
+        u = response.usage
         c.input_tokens += u.get("input_tokens", 0) or 0
         c.output_tokens += u.get("output_tokens", 0) or 0
         c.cache_read += u.get("cache_read_input_tokens", 0) or 0
         c.cache_write += u.get("cache_creation_input_tokens", 0) or 0
-        d, confidence = price(u, e.model)
-        c.dollars += d
-        if confidence == "exact":
+        if response.dollars is not None:
+            c.dollars += response.dollars
+        if response.confidence == "exact":
             c.priced_calls += 1
+        elif response.confidence == "inferred":
+            c.estimated_calls += 1
+            if response.model and response.model != SYNTHETIC:
+                c.estimated_models.add(response.model)
         else:
             c.unpriced_calls += 1
-            if e.model and e.model != SYNTHETIC:
-                c.unknown_models.add(f"{e.model} ({confidence})")
+            if response.model and response.model != SYNTHETIC:
+                c.unpriced_models.add(response.model)
     return c
 
 
@@ -147,17 +226,15 @@ def running(events):
     out = []
     total_d = 0.0
     total_t = 0
-    seen = set()
+    responses = {}
     for e in events:
         if e.usage:
-            key = (e.uuid, e.model)
-            if key not in seen:
-                seen.add(key)
-                u = e.usage
-                d, _c = price(u, e.model)
-                total_d += d
-                total_t += ((u.get("input_tokens", 0) or 0) + (u.get("output_tokens", 0) or 0)
-                            + (u.get("cache_read_input_tokens", 0) or 0)
-                            + (u.get("cache_creation_input_tokens", 0) or 0))
+            previous, current = _update_response(responses, e)
+            total_d += (current.dollars or 0.0) - (
+                previous.dollars if previous and previous.dollars is not None else 0.0
+            )
+            total_t += _token_total(current.usage) - (
+                _token_total(previous.usage) if previous else 0
+            )
         out.append((total_d, total_t))
     return out

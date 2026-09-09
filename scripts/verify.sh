@@ -187,7 +187,7 @@ PY
 fi
 
 echo
-echo "7. the cost model does not price cached tokens as fresh ones"
+echo "7. the cost model keeps pricing identity and confidence explicit"
 # The easiest way to publish a wrong number, and it is off by several times on a real run.
 if python3 - <<'PY'
 from agent_replay.cost import price, rate_for
@@ -204,8 +204,14 @@ if conf != "exact":
 _, c2 = rate_for("claude-opus-5")
 if c2 != "inferred":
     print(f"    an unlisted model should be reported as inferred, got {c2}"); sys.exit(1)
+_, c3 = rate_for("claude-opus-4-999")
+if c3 == "exact":
+    print("    a lookalike model id was incorrectly priced as exact"); sys.exit(1)
+unknown, c4 = price(usage, "provider-model-with-no-rate")
+if unknown is not None or c4 != "unknown":
+    print(f"    an unknown model should be unpriced, got {unknown!r} ({c4})"); sys.exit(1)
 PY
-then ok "cache reads are discounted, and an unlisted model is flagged as an estimate"
+then ok "cache reads are discounted, aliases are explicit, and unknown rates stay unavailable"
 else bad "the cost model is wrong"; fi
 
 echo

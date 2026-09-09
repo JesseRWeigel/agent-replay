@@ -203,14 +203,20 @@ to write the file if anything credential-shaped survives.">
   session several times over.</p>
   <pre>cache-aware  $0.3180
 naive        $3.0180     9.5x too high on a single synthetic turn</pre>
-  <p>On a real session of 856 million tokens the same mistake reports roughly
-  <strong>$12,700 instead of $1,690</strong>. The gutter also separates confidence: a model with
-  a published rate is priced exactly, a model whose family is known but whose specific price is
-  not gets a family rate and is <strong>labelled an estimate</strong>, and an unrecognised model
-  falls back to the most expensive tier so the number errs high rather than flattering.</p>
-  <div class="note">Inventing a specific price for a model whose pricing has not been verified
-  would be worse than saying the figure is an estimate, so the page says which calls were
-  estimated and on what basis.</div>
+  <p>An earlier captured session of 856 million tokens illustrated the mistake as roughly
+  <strong>$12,700 instead of $1,690</strong>. Those historical figures have not been recomputed
+  under the current response-identity rules and are included only to show the scale of the error.
+  Provider message IDs also matter: duplicate rows and cumulative streaming updates for one
+  response must be billed once. The same message ID remains one response if its row UUID or model
+  label changes, and the first non-empty model label sets the price if duplicate rows disagree.
+  When no message ID is available, the transcript row is the conservative fallback identity.</p>
+  <p>The gutter separates pricing confidence. Only listed model IDs and documented aliases receive
+  an exact rate. A known Claude family can use a labelled family estimate. An unrecognised model
+  keeps its tokens in the total while its dollar cost is omitted, and the report marks the dollar
+  total as incomplete.</p>
+  <div class="note">Every dollar figure is an API-equivalent list-price estimate in USD based on
+  the dated source shown in the report. It is not an invoice and does not represent what a
+  subscription user paid.</div>
 </section>
 
 <section>
@@ -249,6 +255,9 @@ agent-replay run.jsonl --include-thinking    # reasoning blocks, excluded by def
     <li><strong>Encryption, reversal and chunking are not attempted.</strong> A secret split
     across two strings and reassembled at runtime will not be found. One layer of base64 is
     decoded and checked; more than one is not.</li>
+    <li><strong>Cost is an API-equivalent USD estimate, not an invoice.</strong> Subscription
+    plans, discounts, batch pricing and calls with no known rate are not included in the dollar
+    total. Unknown-model tokens remain counted and the report marks the total as incomplete.</li>
     <li><strong>Read the file before you post it.</strong> This makes a leak much less likely
     and cannot make it impossible, and no tool that pattern-matches text can.</li>
   </ul>

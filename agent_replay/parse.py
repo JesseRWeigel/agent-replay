@@ -35,10 +35,13 @@ class Event:
     is_error: bool = False
     usage: dict = field(default_factory=dict)
     model: str = ""
+    message_id: str = ""
     uuid: str = ""
+    source_row: int = -1
     parent: str = ""
     sidechain: bool = False
     raw_type: str = ""
+    hidden: bool = False
 
 
 # Record types that carry no content a reader of a replay would want. They are counted and
@@ -79,7 +82,7 @@ def parse_transcript(path, *, include_thinking: bool = False, include_sidechains
 
     events: list[Event] = []
     i = 0
-    for _, rec in records:
+    for source_row, rec in records:
         rtype = rec.get("type", "")
         if rtype in IGNORED_TYPES:
             stats["ignored"] += 1
@@ -95,6 +98,10 @@ def parse_transcript(path, *, include_thinking: bool = False, include_sidechains
         msg = rec.get("message") or {}
         usage = msg.get("usage") or {}
         model = msg.get("model", "")
+        message_id = msg.get("id", "")
+        if not isinstance(message_id, str):
+            message_id = ""
+        row_event_start = len(events)
 
         if rtype in ("user", "assistant"):
             for b in _blocks(msg.get("content")):
@@ -148,11 +155,25 @@ def parse_transcript(path, *, include_thinking: bool = False, include_sidechains
                                 uuid=uuid, parent=parent, sidechain=side, raw_type=rtype))
             i += 1
 
+        row_events = events[row_event_start:]
+        if usage and not any(event.usage for event in row_events):
+            # A cumulative usage update may have empty content, hidden thinking only, or only
+            # block types this parser cannot render. Keep its accounting without inventing a
+            # visible transcript row or exposing hidden content.
+            events.append(Event(i, "accounting", "assistant", ts, usage=usage, model=model,
+                                uuid=uuid, parent=parent, sidechain=side, raw_type=rtype,
+                                hidden=True))
+            i += 1
+
+        for event in events[row_event_start:]:
+            event.message_id = message_id
+            event.source_row = source_row
+
     # Pair each tool_result back to the call that produced it, so the UI can nest them.
     by_id = {e.tool_id: e for e in events if e.kind == "tool_use" and e.tool_id}
     for e in events:
         if e.kind == "tool_result" and e.tool_id in by_id:
             e.tool = by_id[e.tool_id].tool
 
-    stats["events"] = len(events)
+    stats["events"] = sum(not event.hidden for event in events)
     return events, stats

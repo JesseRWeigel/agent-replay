@@ -106,7 +106,8 @@ def main(argv=None) -> int:
     events, stats = parse.parse_transcript(
         path, include_thinking=a.include_thinking,
         include_sidechains=not a.no_sidechains)
-    if not events:
+    visible_events = stats["events"]
+    if not visible_events:
         sys.stderr.write(
             f"{path} produced no events from {stats['lines']} lines. "
             "That is reported as an error rather than an empty replay, because an empty "
@@ -119,19 +120,20 @@ def main(argv=None) -> int:
 
     if a.audit_only:
         print(f"{path}")
-        print(f"  {stats['lines']:,} lines, {len(events):,} events, "
+        print(f"  {stats['lines']:,} lines, {visible_events:,} events, "
               f"{stats['unparsable']} unparsable, {stats['ignored']:,} metadata records")
         if not found:
             print("  nothing to redact")
         for k, r in sorted(found.items()):
             print(f"  {r.count:>5}  {k:<18} e.g. {', '.join(r.samples)}")
         c = cost.accumulate(events)
-        print(f"  {c.total_tokens:,} tokens, estimated ${c.dollars:,.2f} "
-              f"({c.priced_calls} exact, {c.unpriced_calls} estimated)")
+        print(f"  {c.total_tokens:,} tokens, API-equivalent USD ${c.dollars:,.2f} "
+              f"({c.priced_calls} exact, {c.estimated_calls} family-estimated, "
+              f"{c.unpriced_calls} unavailable; not an invoice)")
         return 0
 
     title = a.title or f"Agent run: {os.path.basename(path)[:8]}"
-    subtitle = (f"{len(events):,} events from {stats['lines']:,} transcript lines"
+    subtitle = (f"{visible_events:,} events from {stats['lines']:,} transcript lines"
                 + (f", {stats['unparsable']} unparsable" if stats["unparsable"] else "")
                 + (f", {stats['sidechain']:,} from subagents" if stats["sidechain"] else ""))
     page = render.build(events, {
@@ -160,10 +162,12 @@ def main(argv=None) -> int:
         fh.write(page)
     size = os.path.getsize(a.out)
     c = cost.accumulate(events)
+    incomplete = ", incomplete" if c.unpriced_calls else ""
     sys.stderr.write(
-        f"wrote {a.out} ({size / 1e6:.1f} MB, {len(events):,} events, "
+        f"wrote {a.out} ({size / 1e6:.1f} MB, {visible_events:,} events, "
         f"{red_total} secret{'' if red_total == 1 else 's'} removed, "
-        f"{c.total_tokens / 1e6:.1f}M tokens, estimated ${c.dollars:,.2f})\n")
+        f"{c.total_tokens / 1e6:.1f}M tokens, API-equivalent USD ${c.dollars:,.2f}"
+        f"{incomplete}, not an invoice)\n")
     return 0
 
 
