@@ -14,7 +14,7 @@ import json
 import os
 import sys
 
-from . import cost, parse, redact, render
+from . import cost, parse, redact, render, minecraft
 
 
 def find_transcripts(root=None):
@@ -63,6 +63,8 @@ def main(argv=None) -> int:
         description="Turn an agent transcript into one self-contained, redacted HTML replay.")
     p.add_argument("transcript", nargs="?",
                    help="path to a .jsonl transcript, or omit to use the most recent")
+    p.add_argument("--format", choices=("claude", "minecraft-trial"), default="claude",
+                   help="explicit input format; Minecraft requires a prepared summary JSON")
     p.add_argument("-o", "--out", default="replay.html")
     p.add_argument("--title", default=None)
     p.add_argument("--include-thinking", action="store_true",
@@ -80,6 +82,9 @@ def main(argv=None) -> int:
                    help="write the file even if the post-render scan finds something. "
                         "Refuses by default, and you should leave it that way")
     a = p.parse_args(argv)
+
+    if a.format == "minecraft-trial" and (not a.transcript or a.list or a.include_thinking):
+        p.error("minecraft-trial requires an explicit file and does not accept --list/--include-thinking")
 
     if a.list:
         found = find_transcripts()
@@ -103,9 +108,16 @@ def main(argv=None) -> int:
         sys.stderr.write(f"no such transcript: {path}\n")
         return 2
 
-    events, stats = parse.parse_transcript(
-        path, include_thinking=a.include_thinking,
-        include_sidechains=not a.no_sidechains)
+    try:
+        if a.format == "minecraft-trial":
+            events, stats = minecraft.parse_trial(path)
+        else:
+            events, stats = parse.parse_transcript(
+                path, include_thinking=a.include_thinking,
+                include_sidechains=not a.no_sidechains)
+    except (ValueError, OSError, UnicodeError, RecursionError):
+        sys.stderr.write("Invalid or unreadable input; no output written.\n")
+        return 2
     visible_events = stats["events"]
     if not visible_events:
         sys.stderr.write(
@@ -126,6 +138,9 @@ def main(argv=None) -> int:
             print("  nothing to redact")
         for k, r in sorted(found.items()):
             print(f"  {r.count:>5}  {k:<18} e.g. {', '.join(r.samples)}")
+        if a.format == "minecraft-trial":
+            print("  Token use and cost not supplied")
+            return 0
         c = cost.accumulate(events)
         print(f"  {c.total_tokens:,} tokens, API-equivalent USD ${c.dollars:,.2f} "
               f"({c.priced_calls} exact, {c.estimated_calls} family-estimated, "
@@ -136,9 +151,12 @@ def main(argv=None) -> int:
     subtitle = (f"{visible_events:,} events from {stats['lines']:,} transcript lines"
                 + (f", {stats['unparsable']} unparsable" if stats["unparsable"] else "")
                 + (f", {stats['sidechain']:,} from subagents" if stats["sidechain"] else ""))
+    if a.format == "minecraft-trial":
+        subtitle = stats["notice"]
     page = render.build(events, {
         "title": title, "subtitle": subtitle, "redactions": found,
         "thinking": a.include_thinking,
+        "accounting_available": a.format != "minecraft-trial",
     }, max_output=a.max_output)
 
     # The refusal. Scanning the finished page, with a checker that shares no pattern with the
@@ -161,6 +179,9 @@ def main(argv=None) -> int:
     with open(a.out, "w", encoding="utf-8") as fh:
         fh.write(page)
     size = os.path.getsize(a.out)
+    if a.format == "minecraft-trial":
+        sys.stderr.write(f"wrote {a.out} ({visible_events} events; token use and cost not supplied)\n")
+        return 0
     c = cost.accumulate(events)
     incomplete = ", incomplete" if c.unpriced_calls else ""
     sys.stderr.write(

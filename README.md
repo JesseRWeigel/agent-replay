@@ -139,6 +139,18 @@ replay looks like a clean run.
 **A record the parser does not understand is kept as an `unknown` event**, not dropped. Silently
 skipping is how an exporter produces a replay that looks complete and is not.
 
+## Minecraft trial walkthroughs
+
+Use `--format minecraft-trial` with a deliberately prepared, narrow summary JSON to replay
+Minecraft action/result pairs. The included fixture is clearly labeled synthetic, raw/private
+log fields are rejected, and no token or cost estimate is invented. This does not evaluate model
+success or grant permission to publish real evidence. See [the input contract and safety
+boundaries](docs/minecraft-trials.md).
+
+```bash
+python -m agent_replay.cli examples/minecraft-failure.json --format minecraft-trial -o replay.html
+```
+
 ## The replay itself
 
 One file, no network. Verified in a real browser at 390px and 1280px: **zero requests to any

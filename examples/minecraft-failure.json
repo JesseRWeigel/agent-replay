@@ -1,0 +1,11 @@
+{
+  "schema": "minecraft-replay-v1",
+  "provenance": "synthetic",
+  "outcome": {"infrastructure": "qualified", "acquired": false},
+  "actions": [
+    {"action": {"kind": "look_at", "x": 1, "y": 2, "z": 1}, "reply": {"status": "completed"}},
+    {"action": {"kind": "dig"}, "reply": {"status": "completed", "observation": {"inventory": [], "nearbyDroppedItems": [{"name": "oak_log", "count": 1, "position": {"x": 1, "y": 1, "z": 1}}]}}},
+    {"action": {"kind": "move_to", "x": 1, "y": 1, "z": 1}, "reply": {"status": "rejected", "error": {"code": "navigation_blocked", "recoverable": true}}},
+    {"action": {"kind": "finish"}, "reply": {"status": "finished", "observation": {"inventory": []}}}
+  ]
+}

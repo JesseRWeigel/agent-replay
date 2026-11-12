@@ -198,8 +198,8 @@ JS = r"""
     });
     list.innerHTML = visible.map(function (e) {
       return '<article class="ev ' + e.kind + (e.err ? ' err' : '') + '" id="e' + e.i + '">' +
-        '<div class="gutter">' + esc(e.clock) + '<br><span class="money">' + money(e.usd) +
-        '</span><br>' + toks(e.tok) + '</div>' +
+        '<div class="gutter">' + esc(e.clock) + '<br><span class="money">' + (e.usd === null ? 'not supplied' : money(e.usd)) +
+        '</span><br>' + (e.tok === null ? '' : toks(e.tok)) + '</div>' +
         '<div class="body"><div class="head"><span class="who">' +
         esc(e.kind.replace('_', ' ')) + '</span>' +
         (e.tool ? '<span class="tname">' + esc(e.tool) + '</span>' : '') +
@@ -301,6 +301,10 @@ def build(events, meta: dict, *, max_output: int = 6000) -> str:
         payload[-1]["usd"] = round(gutter[-1][0], 6)
         payload[-1]["tok"] = gutter[-1][1]
 
+    if not meta.get("accounting_available", True):
+        for event in payload:
+            event["usd"] = event["tok"] = None
+
     kinds = sorted({e["kind"] for e in payload})
     tools = sorted({e["tool"] for e in payload if e["tool"]})
     red = meta.get("redactions") or {}
@@ -344,6 +348,14 @@ def build(events, meta: dict, *, max_output: int = 6000) -> str:
         else "API-equivalent estimate (USD)"
     )
 
+    accounting_stats = (
+        f'<div class="stat"><b>{total.total_tokens / 1e6:,.1f}M</b><span>tokens</span></div>'
+        f'<div class="stat"><b>${total.dollars:,.2f}</b><span>{cost_label}</span></div>'
+    )
+    if not meta.get("accounting_available", True):
+        accounting_stats = ''
+        price_note = '<p class="banner">Token use and cost were not supplied. No price estimate is made.</p>'
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -361,8 +373,7 @@ def build(events, meta: dict, *, max_output: int = 6000) -> str:
     <div class="stat"><b>{len(payload):,}</b><span>events</span></div>
     <div class="stat"><b>{sum(1 for e in events if e.kind == 'tool_use'):,}</b><span>tool calls</span></div>
     <div class="stat"><b>{sum(1 for e in events if e.is_error):,}</b><span>errors</span></div>
-    <div class="stat"><b>{total.total_tokens / 1e6:,.1f}M</b><span>tokens</span></div>
-    <div class="stat"><b>${total.dollars:,.2f}</b><span>{cost_label}</span></div>
+    {accounting_stats}
     <div class="stat"><b>{red_total}</b><span>secrets removed</span></div>
   </div>
   {banner}
