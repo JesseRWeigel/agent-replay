@@ -17,6 +17,11 @@
 # post-render audit always return clean. Checks 3 and 5 caught them. See README.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+mode=${1:-}
+if [ "$#" -gt 1 ] || { [ -n "$mode" ] && [ "$mode" != "--offline" ]; }; then
+  echo "usage: bash scripts/verify.sh [--offline]" >&2
+  exit 2
+fi
 
 pass=0
 fail=0
@@ -216,17 +221,21 @@ else bad "the cost model is wrong"; fi
 
 echo
 echo "8. a real transcript, if one is present"
-REAL=$(ls -S "$HOME"/.claude/projects/*/*.jsonl 2>/dev/null | head -1 || true)
-if [ -n "$REAL" ] && [ -f "$REAL" ]; then
-  if python3 -m agent_replay.cli "$REAL" -o "$work/real.html" 2>"$work/re" >/dev/null; then
-    n=$(grep -c 'class="ev' "$work/real.html" 2>/dev/null || echo 0)
-    ok "exported a real transcript ($(wc -c < "$work/real.html" | tr -d ' ') bytes)"
-  else
-    cat "$work/re" | head -5
-    bad "a real transcript failed to export, which is the actual use case"
-  fi
+if [ "$mode" = "--offline" ]; then
+  echo "  skipped: offline run uses synthetic fixtures only"
 else
-  bad "no real transcript available, so the end-to-end path was not exercised"
+  REAL=$(ls -S "$HOME"/.claude/projects/*/*.jsonl 2>/dev/null | head -1 || true)
+  if [ -n "$REAL" ] && [ -f "$REAL" ]; then
+    if python3 -m agent_replay.cli "$REAL" -o "$work/real.html" 2>"$work/re" >/dev/null; then
+      n=$(grep -c 'class="ev' "$work/real.html" 2>/dev/null || echo 0)
+      ok "exported a real transcript ($(wc -c < "$work/real.html" | tr -d ' ') bytes)"
+    else
+      cat "$work/re" | head -5
+      bad "a real transcript failed to export, which is the actual use case"
+    fi
+  else
+    bad "no real transcript available, so the end-to-end path was not exercised"
+  fi
 fi
 
 echo
@@ -261,4 +270,4 @@ fi
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 if [ "$fail" -ne 0 ]; then echo "VERIFY FAILED"; exit 1; fi
-echo "VERIFY OK"
+if [ "$mode" = "--offline" ]; then echo "OFFLINE VERIFY OK"; else echo "VERIFY OK"; fi

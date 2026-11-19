@@ -170,6 +170,10 @@ HTML, since agents read and write web files all day.
 
 ## Status
 
+For a synthetic-only check, run `bash scripts/verify.sh --offline`. It does not
+read your local Claude transcripts. Without the flag, the verifier also requires
+a real local transcript.
+
 Verified 2026-09-08.
 
 ```
