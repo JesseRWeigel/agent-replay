@@ -3,7 +3,7 @@
 A transcript is JSON Lines, one record per line, and the records are a linked list: each carries
 a `parentUuid`. They are not guaranteed to be in order in the file, and a resumed session can
 interleave records from more than one branch, so ordering by file position is wrong. Events are
-sorted by timestamp with the parent chain as the tie-break.
+sorted by timestamp with file position as the tie-break; parent IDs are retained as metadata.
 
 Two decisions worth stating.
 
@@ -62,23 +62,33 @@ def _blocks(content):
 
 
 def parse_transcript(path, *, include_thinking: bool = False, include_sidechains: bool = True):
-    """Return (events, stats). Never raises on a malformed line."""
+    """Return events and counts, skipping unparseable JSON or invalid record envelopes."""
     records = []
     stats = {"lines": 0, "unparsable": 0, "ignored": 0, "sidechain": 0}
     with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
+        for source_row, line in enumerate(fh):
             line = line.strip()
             if not line:
                 continue
             stats["lines"] += 1
             try:
-                records.append(json.loads(line))
+                rec = json.loads(line)
             except json.JSONDecodeError:
                 # Counted, not hidden. A truncated final line is normal for a live session.
                 stats["unparsable"] += 1
+                continue
+            # The line can be valid JSON without being a record. Reject incompatible
+            # envelopes before sorting or message extraction, without losing the good rows.
+            if (not isinstance(rec, dict)
+                    or not isinstance(rec.get("timestamp", ""), (str, type(None)))
+                    or not isinstance(rec.get("type", ""), str)
+                    or not isinstance(rec.get("message"), (dict, type(None)))):
+                stats["unparsable"] += 1
+                continue
+            records.append((source_row, rec))
     # Stable order: timestamp first, file position as the tie-break so records written in the
     # same millisecond keep their original sequence.
-    records = sorted(enumerate(records), key=lambda p: (p[1].get("timestamp") or "", p[0]))
+    records = sorted(records, key=lambda p: (p[1].get("timestamp") or "", p[0]))
 
     events: list[Event] = []
     i = 0
@@ -92,7 +102,7 @@ def parse_transcript(path, *, include_thinking: bool = False, include_sidechains
             stats["sidechain"] += 1
             if not include_sidechains:
                 continue
-        ts = rec.get("timestamp", "")
+        ts = rec.get("timestamp") or ""
         uuid = rec.get("uuid", "")
         parent = rec.get("parentUuid") or ""
         msg = rec.get("message") or {}
