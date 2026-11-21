@@ -91,6 +91,17 @@ def rate_for(model: str):
     return None, "unknown"
 
 
+def _cache_writes(usage: dict) -> tuple[int, int]:
+    """Return total writes and the subset explicitly attributed to the 1-hour tier."""
+    reported = usage.get("cache_creation_input_tokens", 0) or 0
+    detail = usage.get("cache_creation") or {}
+    w5 = detail.get("ephemeral_5m_input_tokens", 0) or 0
+    w1h = detail.get("ephemeral_1h_input_tokens", 0) or 0
+    # In a complete provider response the aggregate equals the lifetime sum. A replay may
+    # instead have partial snapshots; retain whichever count accounts for more writes.
+    return max(reported, w5 + w1h), w1h
+
+
 def price(usage: dict, model: str) -> tuple[float | None, str]:
     """API-equivalent USD for one response, or None when no rate is available."""
     if not usage:
@@ -103,18 +114,11 @@ def price(usage: dict, model: str) -> tuple[float | None, str]:
     inp = usage.get("input_tokens", 0) or 0
     out = usage.get("output_tokens", 0) or 0
     read = usage.get("cache_read_input_tokens", 0) or 0
-    write = usage.get("cache_creation_input_tokens", 0) or 0
-
-    # Split the cache write across its two lifetimes when the record says so.
-    detail = usage.get("cache_creation") or {}
-    w5 = detail.get("ephemeral_5m_input_tokens")
-    w1h = detail.get("ephemeral_1h_input_tokens")
-    if w5 is not None or w1h is not None:
-        w5 = w5 or 0
-        w1h = w1h or 0
-        write_cost = (w5 * r["cache_write"] + w1h * r["cache_write"] * CACHE_1H_MULTIPLIER) / 1e6
-    else:
-        write_cost = write * r["cache_write"] / 1e6
+    write, w1h = _cache_writes(usage)
+    # Apply the existing 5-minute fallback only to writes not identified as 1-hour.
+    write_cost = (
+        ((write - w1h) + w1h * CACHE_1H_MULTIPLIER) * r["cache_write"] / 1e6
+    )
 
     total = (inp * r["input"] + out * r["output"] + read * r["cache_read"]) / 1e6 + write_cost
     return total, confidence
@@ -172,6 +176,7 @@ def _merged_usage(previous: dict, update: dict) -> dict:
                 new_detail.get("ephemeral_1h_input_tokens", 0) or 0,
             ),
         }
+    merged["cache_creation_input_tokens"], _ = _cache_writes(merged)
     return merged
 
 

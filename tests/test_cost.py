@@ -76,6 +76,45 @@ class TestBilledResponseIdentity(unittest.TestCase):
         self.assertEqual([tokens for _dollars, tokens in running(events)], [120, 180])
         self.assertEqual(running(events)[-1][0], total.dollars)
 
+    def test_partial_cache_breakdown_keeps_reported_writes_in_price(self):
+        usage = {
+            "cache_creation_input_tokens": 1000,
+            "cache_creation": {"ephemeral_1h_input_tokens": 250},
+        }
+        dollars, confidence = price(usage, SONNET)
+        # 750 unclassified tokens use the existing 5m fallback rate.
+        self.assertAlmostEqual(dollars, (750 * 3.75 + 250 * 6.0) / 1e6)
+        self.assertEqual(confidence, "exact")
+
+    def test_complete_cache_breakdown_does_not_double_count(self):
+        usage = {
+            "cache_creation_input_tokens": 1000,
+            "cache_creation": {
+                "ephemeral_5m_input_tokens": 750,
+                "ephemeral_1h_input_tokens": 250,
+            },
+        }
+        events = parse_records([assistant_record("row-1", "complete-cache", usage)])
+        total = accumulate(events)
+        self.assertEqual(total.cache_write, 1000)
+        self.assertAlmostEqual(total.dollars, (750 * 3.75 + 250 * 6.0) / 1e6)
+        fallback, _ = price({"cache_creation_input_tokens": 1000}, SONNET)
+        self.assertAlmostEqual(fallback, 1000 * 3.75 / 1e6)
+
+    def test_cache_breakdown_only_updates_the_replay_token_total(self):
+        first = {"cache_creation": {"ephemeral_5m_input_tokens": 500}}
+        second = {"cache_creation": {"ephemeral_1h_input_tokens": 200}}
+        events = parse_records([
+            assistant_record("row-1", "cache-update", first, second=1),
+            assistant_record("row-2", "cache-update", second, second=2),
+        ])
+        total = accumulate(events)
+        timeline = running(events)
+        self.assertEqual(total.cache_write, 700)
+        self.assertEqual([tokens for _, tokens in timeline], [500, 700])
+        self.assertAlmostEqual(total.dollars, (500 * 3.75 + 200 * 6.0) / 1e6)
+        self.assertAlmostEqual(timeline[-1][0], total.dollars)
+
     def test_content_free_snapshot_updates_accounting_without_rendered_content(self):
         initial = assistant_record(
             "row-1", "streamed-response", {"input_tokens": 100, "output_tokens": 2}, second=1
