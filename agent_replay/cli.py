@@ -176,6 +176,17 @@ def main(argv=None) -> int:
             return 1
         sys.stderr.write("--allow-leaks given, writing anyway.\n")
 
+    # Compare file identity, not path spelling: a symlink or hard link can name the input.
+    try:
+        if os.path.samefile(path, a.out):
+            sys.stderr.write("Input and output refer to the same file; nothing was written.\n")
+            return 2
+    except FileNotFoundError:
+        pass  # A new output path is normal.
+    except OSError:
+        sys.stderr.write("Could not check whether input and output are the same file.\n")
+        return 2
+
     with open(a.out, "w", encoding="utf-8") as fh:
         fh.write(page)
     size = os.path.getsize(a.out)
