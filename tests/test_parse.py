@@ -37,6 +37,31 @@ class ParseShapeTests(unittest.TestCase):
             ("unknown", "[record of type 'future-record' is not rendered]"), ("user", "later"),
         ])
 
+    def test_sorts_by_instant_across_offsets_and_optional_fractions(self):
+        rows = [
+            user("one millisecond later", "2026-11-19T10:00:00.001Z"),
+            user("same instant, earlier in file", "2026-11-19T05:00:00-05:00"),
+            user("last", "2026-11-19T10:01:00Z"),
+            user("same instant, later in file", "2026-11-19T10:00:00Z"),
+            user("first timed message", "2026-11-19T15:29:59+05:30"),
+            user("no time available", None),
+            user("fraction with one digit", "2026-11-19T10:00:00.1Z"),
+            user("previous fraction padded", "2026-11-19T10:00:00.100Z"),
+            user("sub-microsecond fraction", "2026-11-19T10:00:00.000000001Z"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "test.jsonl"
+            log.write_text("\n".join(map(json.dumps, rows)) + "\n", encoding="utf-8")
+            events, stats = parse_transcript(log)
+        self.assertEqual(stats["unparsable"], 0)
+        self.assertEqual([event.text for event in events], [
+            "no time available", "first timed message",
+            "same instant, earlier in file", "same instant, later in file",
+            "sub-microsecond fraction", "one millisecond later",
+            "fraction with one digit", "previous fraction padded", "last",
+        ])
+        self.assertEqual(events[2].ts, "2026-11-19T05:00:00-05:00")
+
     def test_cli_reports_bad_record_and_exports_good_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "test.jsonl"

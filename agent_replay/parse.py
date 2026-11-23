@@ -19,7 +19,9 @@ reader of a bug report has no way to tell that a third of the run is missing.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -61,6 +63,33 @@ def _blocks(content):
     return []
 
 
+_ISO_SECONDS_FRACTION = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})[.,]([0-9]+)"
+)
+
+
+def _chronological_key(record):
+    source_row, rec = record
+    raw = rec.get("timestamp")
+    if raw:
+        try:
+            # Python 3.10's fromisoformat does not accept Z or arbitrary fraction widths.
+            # Separate ISO fractional seconds so sorting also keeps sub-microsecond precision.
+            normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+            match = _ISO_SECONDS_FRACTION.match(normalized)
+            fraction = match[2].rstrip("0") if match else ""
+            if match:
+                normalized = match[1] + normalized[match.end():]
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return (1, parsed.astimezone(timezone.utc), fraction, source_row)
+        except (ValueError, OverflowError):
+            pass
+    # No reliable time: retain the event, ahead of timed rows, in file order.
+    return (0, datetime.min.replace(tzinfo=timezone.utc), "", source_row)
+
+
 def parse_transcript(path, *, include_thinking: bool = False, include_sidechains: bool = True):
     """Return events and counts, skipping unparseable JSON or invalid record envelopes."""
     records = []
@@ -86,9 +115,8 @@ def parse_transcript(path, *, include_thinking: bool = False, include_sidechains
                 stats["unparsable"] += 1
                 continue
             records.append((source_row, rec))
-    # Stable order: timestamp first, file position as the tie-break so records written in the
-    # same millisecond keep their original sequence.
-    records = sorted(records, key=lambda p: (p[1].get("timestamp") or "", p[0]))
+    # Sort by instant, not timestamp spelling. Keep file order for equal instants.
+    records.sort(key=_chronological_key)
 
     events: list[Event] = []
     i = 0
